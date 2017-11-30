@@ -16,15 +16,70 @@
 import logging
 
 from flask import Flask
+import tweepy
+import json
+from azure.servicebus import ServiceBusService
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+
+hub_name = "ca674-python-tweet-eh"
+key_name = "ca674-python-tweet-pol"
+key_value = "B4vIImObKeeaqiMOhzz+FfpYI2qvZrrdHt/km7+4ueo="
+namespace = "ca674-python-tweet-nsp"
+
+ctoken =  "jm700V8SAXaOpCmjjxQmOnJVK"
+csecret = "Tl5fw1kVBRsr8zI30TmIrWAab4cQa3EFcwSk2uecC0YzASWThI"
+key = "393388532-d2pcrtlglde6VrA2UT60SC0gDfncpWaqAwtofALL"
+secret = "hg4lzzkgCevT2Wcf3s6Q9wNg65Z4dkhPyDbF7hqWqmNil"
+
+keywords = ["bitcoin", "ripple", "litecoin", "ethereum"]
+
+sbs = ServiceBusService(service_namespace=namespace, shared_access_key_name=key_name, shared_access_key_value=key_value)
+
+auth = tweepy.OAuthHandler(ctoken, csecret)
+auth.set_access_token(key, secret)
+api = tweepy.API(auth)
+senti = SentimentIntensityAnalyzer()
 
 
 app = Flask(__name__)
 
 
 @app.route('/')
-def hello():
+def twitter():
     """Return a friendly HTTP greeting."""
-    return 'Hello World!'
+    class MyStreamListener(tweepy.StreamListener):
+        def on_connect(self):
+            print('Connected')
+
+        def on_data(self, data):
+            tweet_data = json.loads(data)
+            snt = senti.polarity_scores(tweet_data["text"])                 # calculate sentiment of tweet
+            sent_scr = str(snt['compound'])                                 # value for sentiment
+            tweet_data['sentiment'] = sent_scr                              # add sentiment to tweet json
+            tweet_data = json.dumps(tweet_data)
+            sbs.send_event(hub_name, tweet_data)
+            print(tweet_data)
+
+        def on_warning(self, notice):
+            print('disconnection warning')
+            return False
+
+        def on_error(self, status_code):
+            if status_code == 420:
+                return False
+    
+    stream_listener = MyStreamListener()
+    myStream = tweepy.Stream(auth=api.auth, listener=stream_listener)
+    test = myStream.filter(track=keywords)
+    return'script running'
+
+#@app.route('/')
+#def hello():
+#    """Return a friendly HTTP greeting."""
+#    return 'Twitter Running!'
+
+
+    
 
 
 @app.errorhandler(500)
@@ -40,4 +95,5 @@ if __name__ == '__main__':
     # This is used when running locally. Gunicorn is used to run the
     # application on Google App Engine. See entrypoint in app.yaml.
     app.run(host='127.0.0.1', port=8080, debug=True)
+    
 # [END app]
