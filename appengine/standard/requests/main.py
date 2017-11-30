@@ -17,50 +17,83 @@ Sample application that demonstrates various aspects of App Engine's request
 handling.
 """
 
-import os
+import tweepy
+import json
+from google.cloud import language
+from google.cloud.language import enums
+from google.cloud.language import types
+from oauth2client.client import GoogleCredentials
 import time
 
-import webapp2
 
 
-# [START request_timer]
-class TimerHandler(webapp2.RequestHandler):
-    def get(self):
-        from google.appengine.runtime import DeadlineExceededError
 
-        try:
-            time.sleep(70)
-            self.response.write('Completed.')
-        except DeadlineExceededError:
-            self.response.clear()
-            self.response.set_status(500)
-            self.response.out.write(
-                'The request did not complete in time.')
-# [END request_timer]
+credentials = GoogleCredentials.get_application_default()
+#from azure.servicebus import ServiceBusService
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 
-# [START environment]
-class PrintEnvironmentHandler(webapp2.RequestHandler):
-    def get(self):
-        self.response.headers['Content-Type'] = 'text/plain'
-        for key, value in os.environ.iteritems():
-            self.response.out.write(
-                "{} = {}\n".format(key, value))
-# [END environment]
+#hub_name = "ca674-python-tweet-eh"
+#key_name = "ca674-python-tweet-pol"
+#key_value = "B4vIImObKeeaqiMOhzz+FfpYI2qvZrrdHt/km7+4ueo="
+#namespace = "ca674-python-tweet-nsp"
+
+ctoken =  "jm700V8SAXaOpCmjjxQmOnJVK"
+csecret = "Tl5fw1kVBRsr8zI30TmIrWAab4cQa3EFcwSk2uecC0YzASWThI"
+key = "393388532-d2pcrtlglde6VrA2UT60SC0gDfncpWaqAwtofALL"
+secret = "hg4lzzkgCevT2Wcf3s6Q9wNg65Z4dkhPyDbF7hqWqmNil"
+
+keywords = ["bitcoin", "ripple", "litecoin", "ethereum"]
+
+sbs = ServiceBusService(service_namespace=namespace, shared_access_key_name=key_name, shared_access_key_value=key_value)
+
+auth = tweepy.OAuthHandler(ctoken, csecret)
+auth.set_access_token(key, secret)
+api = tweepy.API(auth)
+senti = SentimentIntensityAnalyzer()
+
+class MyStreamListener(tweepy.StreamListener):
+    def on_connect(self):
+        print('Connected')
+
+    def on_data(self, data):
+        tweet_data = json.loads(data)
+        client = language.LanguageServiceClient()
+        
+   ###############sentiment
+# The text to analyze     
+        text = tweet_data["text"]
+        text = text.encode("utf-8")
+        document = types.Document(
+    	content=text,
+    	type=enums.Document.Type.PLAIN_TEXT)
+    	gsentiment = client.analyze_sentiment(document=document).document_sentiment
+    	#print('Text: {}'.format(text))
+    	gscore = gsentiment.score
+#    	print('Sentiment: {}, {}'.format(sentiment.score, sentiment.magnitude))
+###############sentiment
+        tweet_data['google_sentiment'] = gscore 
+		
+
+        snt = senti.polarity_scores(tweet_data["text"])                 # calculate sentiment of tweet
+        sent_scr = str(snt['compound'])                                 # value for sentiment
+        tweet_data['sentiment'] = sent_scr                              # add sentiment to tweet json
+        tweet_data = json.dumps(tweet_data)
+        
+        
+        #sbs.send_event(hub_name, tweet_data)
+        print(tweet_data)
+        
+
+    def on_warning(self, notice):
+        print('disconnection warning')
+        return False
+
+    def on_error(self, status_code):
+        if status_code == 420:
+            return False
 
 
-# [START request_ids]
-class RequestIdHandler(webapp2.RequestHandler):
-    def get(self):
-        self.response.headers['Content-Type'] = 'text/plain'
-        request_id = os.environ.get('REQUEST_LOG_ID')
-        self.response.write(
-            'REQUEST_LOG_ID={}'.format(request_id))
-# [END request_ids]
-
-
-app = webapp2.WSGIApplication([
-    ('/timer', TimerHandler),
-    ('/environment', PrintEnvironmentHandler),
-    ('/requestid', RequestIdHandler)
-], debug=True)
+stream_listener = MyStreamListener()
+myStream = tweepy.Stream(auth=api.auth, listener=stream_listener)
+myStream.filter(languages=["en"],track=keywords)
